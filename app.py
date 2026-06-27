@@ -5,7 +5,7 @@ import pandas as pd
 import plotly.graph_objects as go
 
 # ── Permite importar la carpeta modulos/
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from modulos.scraper_bumeran import scrape_ofertas, ofertas_a_texto_corpus
 from modulos.modelos_ir import SistemaRI
@@ -113,7 +113,7 @@ with tab1:
                 nombres = [f"{p.get('nombre', 'Candidato')}" for p in perfiles_filtrados]
                 st.session_state.sistema_ri = SistemaRI(st.session_state.textos, nombres, [len(t.split()) for t in st.session_state.textos])
                 
-                st.success(f" Se extrajeron y filtraron {len(perfiles_filtrados)} perfiles exitosamente. ¡Ve a la pestaña 2 para ver cómo se procesan!")
+                st.success(f"✅ Se extrajeron y filtraron {len(perfiles_filtrados)} perfiles exitosamente. ¡Ve a la pestaña 2 para ver cómo se procesan!")
                 
                 df_res = pd.DataFrame(perfiles_filtrados)
                 if not df_res.empty:
@@ -250,9 +250,34 @@ with tab4:
                     else: val_investigacion = 1
                     
                     vals = [val_formacion, val_docencia, val_profesional, val_empresa, val_investigacion]
-                    fig.add_trace(go.Scatterpolar(r=vals + [vals[0]], theta=categorias + [categorias[0]], fill='toself', name=nombre))
                     
-                fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 10])), showlegend=True, height=450)
+                    # Diferenciar al ganador (i == 0) del resto
+                    i = top_nombres.index(nombre)
+                    if i == 0:
+                        nombre_leyenda = f"GANADOR: {nombre}"
+                        color = "#16b4a8"
+                        ancho = 3
+                        dash = "solid"
+                        fill = "toself"
+                        fillcolor = "rgba(22, 180, 168, 0.4)"
+                    else:
+                        nombre_leyenda = f"Top {i+1}: {nombre}"
+                        color = "#ff7f0e" if i == 1 else "#2ca02c"
+                        ancho = 2
+                        dash = "dot"
+                        fill = "toself"
+                        fillcolor = "rgba(0,0,0,0)" # transparente para los perdedores
+
+                    fig.add_trace(go.Scatterpolar(
+                        r=vals + [vals[0]], 
+                        theta=categorias + [categorias[0]], 
+                        fill=fill, 
+                        fillcolor=fillcolor,
+                        name=nombre_leyenda,
+                        line=dict(color=color, width=ancho, dash=dash)
+                    ))
+                    
+                fig.update_layout(polar=dict(radialaxis=dict(visible=True, range=[0, 10])), showlegend=True, height=450, title="Comparador de Radares: Ganador vs Resto")
                 return fig
 
             if len(resultado_sc["bm25"]["resultados"]) > 0:
