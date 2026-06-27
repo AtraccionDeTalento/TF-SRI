@@ -9,11 +9,12 @@ pueda ejecutarlo sin necesitar la carpeta modulos/ en el repositorio.
 # ══════════════════════════════════════════════════════════════════════════════
 import re
 import os
+import math
 import time
 import unicodedata
 import requests
 from pathlib import Path
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 import streamlit as st
 import pandas as pd
@@ -185,21 +186,70 @@ class MotorTFIDF:
         }
 
 
+class MotorLMDirichlet:
+    """Motor de búsqueda basado en Modelo de Lenguaje con suavizado Dirichlet."""
+
+    def __init__(self, corpus_textos, archivos, mu=2000):
+        self.archivos = archivos
+        self.num_docs = len(corpus_textos)
+        self.mu = mu
+        self.corpus_tokenizado = [preprocesar_simple(t) for t in corpus_textos]
+        todas_palabras = [p for doc in self.corpus_tokenizado for p in doc]
+        self.total_coleccion = max(len(todas_palabras), 1)
+        self.freq_coleccion = Counter(todas_palabras)
+
+    def buscar(self, consulta, top_k=10):
+        inicio = time.time()
+        consulta_tokens = preprocesar_simple(consulta)
+        puntajes = []
+        for doc_tokens in self.corpus_tokenizado:
+            freq_doc = Counter(doc_tokens)
+            largo_doc = max(len(doc_tokens), 1)
+            score = 0.0
+            for palabra in consulta_tokens:
+                tf = freq_doc.get(palabra, 0)
+                prob_col = self.freq_coleccion.get(palabra, 0.5) / self.total_coleccion
+                prob = (tf + self.mu * prob_col) / (largo_doc + self.mu)
+                if prob > 0:
+                    score += math.log(prob)
+            puntajes.append(score)
+        puntajes_arr = np.array(puntajes)
+        indices = np.argsort(puntajes_arr)[::-1][:top_k]
+        tiempo = time.time() - inicio
+        resultados = []
+        for rank, idx in enumerate(indices, start=1):
+            resultados.append({
+                "rank": rank,
+                "id_documento": int(idx),
+                "archivo": self.archivos[idx],
+                "score": float(puntajes_arr[idx]),
+            })
+        return {
+            "metodo": "LM Dirichlet",
+            "tiempo_ms": round(tiempo * 1000, 4),
+            "total_docs": self.num_docs,
+            "resultados": resultados,
+            "scores_completos": puntajes_arr,
+        }
+
+
 class SistemaRI:
-    """Sistema de Recuperación de Información que integra BM25 y TF-IDF."""
+    """Sistema de Recuperación de Información que integra BM25, TF-IDF y LM Dirichlet."""
 
     def __init__(self, textos, archivos, palabras_por_doc):
         self.textos = textos
         self.archivos = archivos
         self.palabras_por_doc = palabras_por_doc
-        self.motor_bm25 = MotorBM25(textos, archivos)
+        self.motor_bm25  = MotorBM25(textos, archivos)
         self.motor_tfidf = MotorTFIDF(textos, archivos)
+        self.motor_lm    = MotorLMDirichlet(textos, archivos)
 
     def buscar_comparativo(self, consulta, top_k=10):
         return {
             "consulta": consulta,
-            "bm25": self.motor_bm25.buscar(consulta, top_k),
+            "bm25":  self.motor_bm25.buscar(consulta, top_k),
             "tfidf": self.motor_tfidf.buscar(consulta, top_k),
+            "lm":    self.motor_lm.buscar(consulta, top_k),
         }
 
 
@@ -952,11 +1002,12 @@ with tab2:
         elif len(resultados_bm25) == 1:
             st.info("Solo hay un candidato. Realiza una búsqueda con más resultados para comparar.")
 
-        # ── Ranking completo BM25 y TF-IDF ────────────────────────────────────
+        # ── Ranking completo BM25 / TF-IDF / LM Dirichlet ───────────────────────
         st.divider()
-        r_bm25, r_tfidf = st.columns(2)
+        r_bm25, r_tfidf, r_lm = st.columns(3)
         with r_bm25:
             st.subheader("Ranking BM25")
+            st.caption(f"⏱ {resultado_sc['bm25']['tiempo_ms']} ms")
             df_bm25 = (
                 pd.DataFrame(resultado_sc["bm25"]["resultados"])
                 .rename(columns={"archivo": "Candidato", "score": "Puntaje", "rank": "Puesto"})
@@ -965,11 +1016,21 @@ with tab2:
 
         with r_tfidf:
             st.subheader("Ranking TF-IDF")
+            st.caption(f"⏱ {resultado_sc['tfidf']['tiempo_ms']} ms")
             df_tfidf = (
                 pd.DataFrame(resultado_sc["tfidf"]["resultados"])
                 .rename(columns={"archivo": "Candidato", "score": "Puntaje", "rank": "Puesto"})
             )
             st.dataframe(df_tfidf[["Puesto", "Candidato", "Puntaje"]], use_container_width=True, hide_index=True)
+
+        with r_lm:
+            st.subheader("Ranking LM Dirichlet")
+            st.caption(f"⏱ {resultado_sc['lm']['tiempo_ms']} ms")
+            df_lm = (
+                pd.DataFrame(resultado_sc["lm"]["resultados"])
+                .rename(columns={"archivo": "Candidato", "score": "Puntaje", "rank": "Puesto"})
+            )
+            st.dataframe(df_lm[["Puesto", "Candidato", "Puntaje"]], use_container_width=True, hide_index=True)
 
     else:
         st.warning("Realiza una búsqueda en la pestaña 1 primero.")
