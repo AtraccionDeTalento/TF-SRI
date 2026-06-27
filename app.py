@@ -691,10 +691,6 @@ st.markdown("""
 <style>
 h1 { color: #16b4a8; }
 .stButton>button { background-color: #16b4a8; color: white; border-radius: 5px; }
-.modulo-box {
-    background: #f8f9fa; padding: 15px; border-radius: 8px;
-    border-left: 4px solid #16b4a8; margin-bottom: 20px;
-}
 </style>
 """, unsafe_allow_html=True)
 
@@ -724,23 +720,15 @@ if "perfiles" not in st.session_state:
     st.session_state.sistema_ri = None
 
 # Pestañas principales
-tab1, tab2, tab3, tab4 = st.tabs([
+tab1, tab2 = st.tabs([
     "1️⃣ Búsqueda y Filtros",
-    "2️⃣ Motor Lingüístico",
-    "3️⃣ Indexación",
-    "4️⃣ Ranking y Clasificación"
+    "2️⃣ Ranking y Clasificación"
 ])
 
 # ──────────────────────────────────────────────────────────────────────────────
 # PESTAÑA 1: BÚSQUEDA Y FILTROS
 # ──────────────────────────────────────────────────────────────────────────────
 with tab1:
-    st.markdown(
-        "<div class='modulo-box'><strong>1. Interfaz de Usuario y Entrada (Lo que tú ves):</strong> "
-        "Caja de búsqueda flexible con filtros de facetas para segmentar resultados.</div>",
-        unsafe_allow_html=True
-    )
-
     col1, col2 = st.columns([3, 1])
     with col1:
         termino = st.text_input(
@@ -813,232 +801,175 @@ with tab1:
                 st.warning("No se encontraron perfiles. Intenta con otro término.")
 
 # ──────────────────────────────────────────────────────────────────────────────
-# PESTAÑA 2: PROCESAMIENTO DE TEXTO
+# PESTAÑA 2: RANKING Y CLASIFICACIÓN
 # ──────────────────────────────────────────────────────────────────────────────
+
+def _calcular_valores_radar(p):
+    """Calcula los 5 valores del radar para un perfil."""
+    txt = (str(p.get("descripcion", "")) + " " + str(p.get("titulo", ""))).lower()
+
+    if "doctor" in txt or "phd" in txt:
+        val_formacion = 10
+    elif "maestr" in txt or "master" in txt or "magister" in txt:
+        val_formacion = 8
+    elif "bachiller" in txt or "licenciad" in txt:
+        val_formacion = 5
+    else:
+        val_formacion = 3
+
+    try:
+        anios = float(p.get("anios", 0) or 0)
+    except Exception:
+        anios = 0
+
+    es_docente = "profesor" in txt or "docente" in txt or p.get("area") == "Educación Superior"
+    val_docencia = min((anios / 5.0) * 10, 10) if es_docente else min((anios / 10.0) * 4, 4)
+
+    es_corp = (
+        p.get("area") == "Tecnología de la Información" or
+        "gerente" in txt or "jefe" in txt or "senior" in txt
+    )
+    val_profesional = min((anios / 7.0) * 10, 10) if es_corp else min((anios / 10.0) * 5, 5)
+    if "gerente" in txt or "director" in txt or "lead" in txt:
+        val_profesional = min(val_profesional + 2, 10)
+
+    empresa = str(p.get("empresa", "")).upper()
+    top_empresas = ["GOOGLE", "AWS", "PUCP", "BCP", "INTERBANK", "UPC", "GLOBANT", "TELEFÓNICA"]
+    val_empresa = 10 if empresa in top_empresas else (7 if empresa and empresa != "N/A" else 4)
+
+    if "scopus" in txt or "wos" in txt or "paper" in txt or "q1" in txt:
+        val_investigacion = 10
+    elif "investigación" in txt or "revista" in txt or "publicación" in txt:
+        val_investigacion = 7
+    elif "proyecto" in txt or "innovación" in txt:
+        val_investigacion = 4
+    else:
+        val_investigacion = 1
+
+    return [val_formacion, val_docencia, val_profesional, val_empresa, val_investigacion]
+
+
+def _figura_radar_individual(p, titulo, color, fillcolor):
+    """Genera una figura Plotly con el radar de un único candidato."""
+    vals = _calcular_valores_radar(p)
+    categorias = [
+        'Formación Académica', 'Experiencia Docente',
+        'Experiencia Profesional', 'Centro de Labores', 'Investigación'
+    ]
+    fig = go.Figure()
+    fig.add_trace(go.Scatterpolar(
+        r=vals + [vals[0]],
+        theta=categorias + [categorias[0]],
+        fill="toself",
+        fillcolor=fillcolor,
+        name=titulo,
+        line=dict(color=color, width=3)
+    ))
+    fig.update_layout(
+        polar=dict(radialaxis=dict(visible=True, range=[0, 10])),
+        showlegend=False,
+        height=380,
+        margin=dict(t=60, b=20, l=40, r=40),
+        title=dict(text=titulo, font=dict(size=13))
+    )
+    return fig, vals
+
+
 with tab2:
-    st.markdown(
-        "<div class='modulo-box'><strong>2. Procesamiento de Texto (El motor lingüístico):</strong> "
-        "Limpieza de palabras mediante tokenización, eliminación de stopwords, "
-        "lematización (stemming) y normalización.</div>",
-        unsafe_allow_html=True
-    )
-
-    if st.session_state.perfiles:
-        st.subheader("Análisis de la Consulta de Búsqueda")
-        st.info(f"Consulta original: **\"{termino}\"**")
-
-        t_tokens = tokenizar(termino)
-        t_sin_sw = eliminar_stopwords(t_tokens)
-        t_stem   = aplicar_stemming(t_sin_sw)
-
-        c1, c2, c3 = st.columns(3)
-        c1.markdown("**1. Tokenización y Normalización**")
-        c1.caption("Separa en palabras y elimina mayúsculas/acentos.")
-        c1.code(" | ".join(t_tokens))
-
-        c2.markdown("**2. Eliminación de Stopwords**")
-        c2.caption("Ignora preposiciones y conectores (de, con, en).")
-        c2.code(" | ".join(t_sin_sw))
-
-        c3.markdown("**3. Lematización / Stemming**")
-        c3.caption("Reduce la palabra a su raíz fonética.")
-        c3.code(" | ".join(t_stem))
-
-        st.divider()
-        st.subheader("Procesamiento de los Documentos (CVs)")
-        st.write(
-            "El mismo proceso se aplica a los textos largos de los currículums "
-            "extraídos para poder compararlos matemáticamente."
-        )
-        if st.session_state.textos:
-            muestra = st.session_state.textos[0]
-            st.text_area("Ejemplo de CV original (Fragmento):", muestra[:300] + "...", height=100)
-            m_tokens = tokenizar(muestra)
-            m_sin_sw = eliminar_stopwords(m_tokens)
-            m_stem   = aplicar_stemming(m_sin_sw)
-            st.code(" | ".join(m_stem[:25]) + " ... (continúa)")
-    else:
-        st.warning("Realiza una búsqueda en la pestaña 1 primero.")
-
-# ──────────────────────────────────────────────────────────────────────────────
-# PESTAÑA 3: INDEXACIÓN
-# ──────────────────────────────────────────────────────────────────────────────
-with tab3:
-    st.markdown(
-        "<div class='modulo-box'><strong>3. Indexación (El almacenamiento):</strong> "
-        "El Índice Invertido guarda una lista de todas las palabras únicas y apunta "
-        "exactamente en qué documentos aparecen para acelerar la búsqueda.</div>",
-        unsafe_allow_html=True
-    )
-
-    if st.session_state.sistema_ri:
-        motor_tfidf = st.session_state.sistema_ri.motor_tfidf
-
-        c1, c2, _ = st.columns(3)
-        c1.metric("Documentos Indexados", len(st.session_state.textos))
-        c2.metric("Tamaño del Vocabulario (Términos únicos)", motor_tfidf.vocabulario_size)
-
-        st.subheader("Estructura del Índice Invertido")
-        st.write("Representación del índice invertido generado en memoria:")
-
-        vocab_muestra = list(motor_tfidf.vocabulario.keys())[:20]
-        indice_preview = []
-        for word in vocab_muestra:
-            idx = motor_tfidf.vocabulario[word]
-            docs_aparece = [
-                f"Doc_{i+1}"
-                for i, vector in enumerate(motor_tfidf.matriz_tfidf)
-                if vector[idx] > 0
-            ]
-            indice_preview.append({
-                "Término (Raíz)": word,
-                "ID Término": idx,
-                "Aparece en Documentos": ", ".join(docs_aparece[:5]) + ("..." if len(docs_aparece) > 5 else "")
-            })
-
-        st.dataframe(pd.DataFrame(indice_preview), use_container_width=True)
-    else:
-        st.warning("Realiza una búsqueda en la pestaña 1 primero.")
-
-# ──────────────────────────────────────────────────────────────────────────────
-# PESTAÑA 4: COINCIDENCIA Y CLASIFICACIÓN
-# ──────────────────────────────────────────────────────────────────────────────
-with tab4:
-    st.markdown(
-        "<div class='modulo-box'><strong>4. Coincidencia y Clasificación (Ranking):</strong> "
-        "Algoritmos de relevancia (TF-IDF y BM25) calculan qué tan bien coincide tu "
-        "consulta con los documentos y los ordenan por puntuación.</div>",
-        unsafe_allow_html=True
-    )
-
     if st.session_state.sistema_ri:
         resultado_sc = st.session_state.sistema_ri.buscar_comparativo(
             termino, top_k=min(10, len(st.session_state.textos))
         )
+        resultados_bm25 = resultado_sc["bm25"]["resultados"]
 
-        t_radar, t_bm25, t_tfidf = st.tabs([
-            "🕸️ Radar de Contratación",
-            "🏆 Algoritmo BM25",
-            "🏆 Algoritmo TF-IDF"
-        ])
-
-        with t_radar:
-            st.info(
-                "Visualización multicriterio de los 3 mejores perfiles encontrados "
-                "cruzando la relevancia algorítmica con las reglas de negocio (C1 a C5)."
+        if len(resultados_bm25) >= 2:
+            # ── Selector de candidato a comparar ──────────────────────────────
+            st.subheader("Comparativa de Radares")
+            opciones_comparar = [
+                f"#{r['rank']} — {r['archivo']}  (BM25: {r['score']:.4f})"
+                for r in resultados_bm25[1:]
+            ]
+            idx_selector = st.selectbox(
+                "Selecciona el candidato a comparar contra el ganador:",
+                range(len(opciones_comparar)),
+                format_func=lambda i: opciones_comparar[i]
             )
+            # idx_selector → posición en resultados_bm25[1:], así que +1 en la lista original
+            candidato_comparado = resultados_bm25[idx_selector + 1]
 
-            def graficar_radar(perfiles_list, res_bm25, res_tfidf, top_n=3):
-                top_nombres = [r["archivo"] for r in res_bm25["resultados"][:top_n]]
-                fig = go.Figure()
-                categorias = [
+            nombre_ganador   = resultados_bm25[0]["archivo"]
+            nombre_comparado = candidato_comparado["archivo"]
+            score_ganador    = resultados_bm25[0]["score"]
+            score_comparado  = candidato_comparado["score"]
+            rank_comparado   = candidato_comparado["rank"]
+
+            perfil_ganador   = next((p for p in st.session_state.perfiles if p.get("nombre") == nombre_ganador), None)
+            perfil_comparado = next((p for p in st.session_state.perfiles if p.get("nombre") == nombre_comparado), None)
+
+            # ── Dos radares lado a lado ────────────────────────────────────────
+            col_izq, col_der = st.columns(2)
+
+            with col_izq:
+                if perfil_ganador:
+                    fig_g, vals_g = _figura_radar_individual(
+                        perfil_ganador,
+                        f"🥇 GANADOR\n{nombre_ganador}",
+                        color="#16b4a8",
+                        fillcolor="rgba(22, 180, 168, 0.35)"
+                    )
+                    st.plotly_chart(fig_g, use_container_width=True)
+                    st.caption(f"BM25 Score: **{score_ganador:.4f}**")
+
+            with col_der:
+                if perfil_comparado:
+                    fig_c, vals_c = _figura_radar_individual(
+                        perfil_comparado,
+                        f"#{rank_comparado} {nombre_comparado}",
+                        color="#ff7f0e",
+                        fillcolor="rgba(255, 127, 14, 0.25)"
+                    )
+                    st.plotly_chart(fig_c, use_container_width=True)
+                    st.caption(f"BM25 Score: **{score_comparado:.4f}**")
+
+            # ── Tabla resumen de diferencias ──────────────────────────────────
+            if perfil_ganador and perfil_comparado:
+                categorias_labels = [
                     'Formación Académica', 'Experiencia Docente',
                     'Experiencia Profesional', 'Centro de Labores', 'Investigación'
                 ]
+                vals_g2 = _calcular_valores_radar(perfil_ganador)
+                vals_c2 = _calcular_valores_radar(perfil_comparado)
+                df_diff = pd.DataFrame({
+                    "Criterio": categorias_labels,
+                    f"🥇 {nombre_ganador}": vals_g2,
+                    f"#{rank_comparado} {nombre_comparado}": vals_c2,
+                    "Diferencia": [g - c for g, c in zip(vals_g2, vals_c2)]
+                })
+                st.divider()
+                st.subheader("Tabla Comparativa por Criterio")
+                st.dataframe(df_diff, use_container_width=True, hide_index=True)
 
-                for i, nombre in enumerate(top_nombres):
-                    p = next((x for x in perfiles_list if x.get("nombre") == nombre), None)
-                    if not p:
-                        continue
+        elif len(resultados_bm25) == 1:
+            st.info("Solo hay un candidato. Realiza una búsqueda con más resultados para comparar.")
 
-                    txt = (
-                        str(p.get("descripcion", "")).lower() + " " +
-                        str(p.get("titulo", "")).lower()
-                    )
-
-                    if "doctor" in txt or "phd" in txt:
-                        val_formacion = 10
-                    elif "maestr" in txt or "master" in txt or "magister" in txt:
-                        val_formacion = 8
-                    elif "bachiller" in txt or "licenciad" in txt:
-                        val_formacion = 5
-                    else:
-                        val_formacion = 3
-
-                    try:
-                        anios = float(p.get("anios", 0) or 0)
-                    except Exception:
-                        anios = 0
-
-                    es_docente = "profesor" in txt or "docente" in txt or p.get("area") == "Educación Superior"
-                    val_docencia = min((anios / 5.0) * 10, 10) if es_docente else min((anios / 10.0) * 4, 4)
-
-                    es_corp = (
-                        p.get("area") == "Tecnología de la Información" or
-                        "gerente" in txt or "jefe" in txt or "senior" in txt
-                    )
-                    val_profesional = min((anios / 7.0) * 10, 10) if es_corp else min((anios / 10.0) * 5, 5)
-                    if "gerente" in txt or "director" in txt or "lead" in txt:
-                        val_profesional = min(val_profesional + 2, 10)
-
-                    empresa = str(p.get("empresa", "")).upper()
-                    top_empresas = ["GOOGLE", "AWS", "PUCP", "BCP", "INTERBANK", "UPC", "GLOBANT", "TELEFÓNICA"]
-                    val_empresa = 10 if empresa in top_empresas else (7 if empresa and empresa != "N/A" else 4)
-
-                    if "scopus" in txt or "wos" in txt or "paper" in txt or "q1" in txt:
-                        val_investigacion = 10
-                    elif "investigación" in txt or "revista" in txt or "publicación" in txt:
-                        val_investigacion = 7
-                    elif "proyecto" in txt or "innovación" in txt:
-                        val_investigacion = 4
-                    else:
-                        val_investigacion = 1
-
-                    vals = [val_formacion, val_docencia, val_profesional, val_empresa, val_investigacion]
-
-                    if i == 0:
-                        nombre_leyenda = f"GANADOR: {nombre}"
-                        color = "#16b4a8"
-                        ancho = 3
-                        dash = "solid"
-                        fillcolor = "rgba(22, 180, 168, 0.4)"
-                    else:
-                        nombre_leyenda = f"Top {i+1}: {nombre}"
-                        color = "#ff7f0e" if i == 1 else "#2ca02c"
-                        ancho = 2
-                        dash = "dot"
-                        fillcolor = "rgba(0,0,0,0)"
-
-                    fig.add_trace(go.Scatterpolar(
-                        r=vals + [vals[0]],
-                        theta=categorias + [categorias[0]],
-                        fill="toself",
-                        fillcolor=fillcolor,
-                        name=nombre_leyenda,
-                        line=dict(color=color, width=ancho, dash=dash)
-                    ))
-
-                fig.update_layout(
-                    polar=dict(radialaxis=dict(visible=True, range=[0, 10])),
-                    showlegend=True,
-                    height=450,
-                    title="Comparador de Radares: Ganador vs Resto"
-                )
-                return fig
-
-            if resultado_sc["bm25"]["resultados"]:
-                fig_radar = graficar_radar(
-                    st.session_state.perfiles,
-                    resultado_sc["bm25"],
-                    resultado_sc["tfidf"],
-                    top_n=3
-                )
-                st.plotly_chart(fig_radar, use_container_width=True)
-
-        with t_bm25:
-            st.write("Resultados usando el modelo probabilístico BM25 (Mejor manejo de longitud de documentos).")
+        # ── Ranking completo BM25 y TF-IDF ────────────────────────────────────
+        st.divider()
+        r_bm25, r_tfidf = st.columns(2)
+        with r_bm25:
+            st.subheader("Ranking BM25")
             df_bm25 = (
                 pd.DataFrame(resultado_sc["bm25"]["resultados"])
-                .rename(columns={"archivo": "Candidato", "score": "Puntaje BM25", "rank": "Puesto"})
+                .rename(columns={"archivo": "Candidato", "score": "Puntaje", "rank": "Puesto"})
             )
-            st.dataframe(df_bm25[["Puesto", "Candidato", "Puntaje BM25"]], use_container_width=True, hide_index=True)
+            st.dataframe(df_bm25[["Puesto", "Candidato", "Puntaje"]], use_container_width=True, hide_index=True)
 
-        with t_tfidf:
-            st.write("Resultados usando modelo vectorial TF-IDF (Frecuencia de término - Frecuencia inversa).")
+        with r_tfidf:
+            st.subheader("Ranking TF-IDF")
             df_tfidf = (
                 pd.DataFrame(resultado_sc["tfidf"]["resultados"])
-                .rename(columns={"archivo": "Candidato", "score": "Puntaje TF-IDF", "rank": "Puesto"})
+                .rename(columns={"archivo": "Candidato", "score": "Puntaje", "rank": "Puesto"})
             )
-            st.dataframe(df_tfidf[["Puesto", "Candidato", "Puntaje TF-IDF"]], use_container_width=True, hide_index=True)
+            st.dataframe(df_tfidf[["Puesto", "Candidato", "Puntaje"]], use_container_width=True, hide_index=True)
+
     else:
         st.warning("Realiza una búsqueda en la pestaña 1 primero.")
