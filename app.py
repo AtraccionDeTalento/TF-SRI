@@ -451,14 +451,6 @@ with st.sidebar:
     st.title("🧠 SRI Docente")
     st.caption("Arquitectura de 4 Módulos")
     st.divider()
-    st.markdown("""
-    **Módulos del Sistema:**
-    1. Interfaz de Usuario y Filtros
-    2. Procesamiento de Texto
-    3. Indexación (Índice Invertido)
-    4. Coincidencia y Ranking
-    """)
-    st.divider()
     st.write("📍 **Fuente de datos:**")
     st.code("https://bumeran.vercel.app/")
 
